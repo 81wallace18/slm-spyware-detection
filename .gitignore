@@ -1,0 +1,11 @@
+outputs/
+data/raw/
+data/processed/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+wandb/
+*.egg-info/
+dist/
+build/
+.env
