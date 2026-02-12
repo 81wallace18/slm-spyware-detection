@@ -1,0 +1,183 @@
+# ============================================================
+# Hugo — Experiment Configuration
+# CIC-MalMem-2022 | Binary (benign vs malware) | SLM-first
+# ============================================================
+
+# --- Dataset ---
+dataset:
+  name: "CIC-MalMem-2022"
+  path: "data/CIC-MalMem-2022.csv"          # ajuste pro path real
+  target_column: "category"                   # coluna com label
+  positive_label: "Malware"
+  task: "binary"                              # binary | multiclass
+  drop_columns:                               # colunas que vazam rótulo ou são ID
+    - "type"
+    - "family"
+
+# --- Splits ---
+splits:
+  standard:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+    stratify: true
+
+  unseen_family:
+    enabled: true
+    family_column: "family"
+    hold_out_families: ["Spyware_family_1"]   # ajustar com nomes reais
+    method: "leave_one_family_out"            # leave_one_family_out | leave_k_out
+
+# --- Seeds (reprodutibilidade) ---
+seeds: [42, 123, 456, 789, 2024]
+
+# --- Preprocessing (tabular) ---
+preprocessing:
+  numeric:
+    strategy: "zscore"          # zscore | minmax | robust
+  categorical:
+    strategy: "onehot"          # onehot | target_encoding
+  remove_constant_features: true
+  remove_duplicates: true
+
+# --- Serialização (texto para SLM) ---
+serialization:
+  format: "key=value"
+  separator: " ; "
+  sort_keys: true               # ordem alfabética
+  numeric_precision: 4
+  max_tokens: 512               # trunca se ultrapassar
+  exclude_columns: []           # features a excluir da serialização (além de drop_columns)
+
+# --- Baselines ---
+baselines:
+  random_forest:
+    n_estimators: 500
+    max_depth: null
+    min_samples_leaf: 2
+    class_weight: "balanced"
+    n_jobs: -1
+
+  xgboost:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.8
+    colsample_bytree: 0.8
+    scale_pos_weight: 1.0       # dataset é 50/50
+    tree_method: "hist"
+    n_jobs: -1
+
+  mlp:
+    hidden_layers: [256, 128, 64]
+    activation: "relu"
+    dropout: 0.3
+    optimizer: "adam"
+    learning_rate: 0.001
+    batch_size: 256
+    epochs: 50
+    early_stopping:
+      patience: 5
+      monitor: "val_loss"
+
+  mlp_rf:                        # paper base: MLP → RF
+    mlp:
+      hidden_layers: [256, 128, 64]
+      activation: "relu"
+      dropout: 0.3
+      optimizer: "adam"
+      learning_rate: 0.001
+      batch_size: 256
+      epochs: 50
+      early_stopping:
+        patience: 5
+        monitor: "val_loss"
+    embedding_layer: -2          # penúltima camada (64-dim)
+    rf:
+      n_estimators: 500
+      max_depth: null
+      min_samples_leaf: 2
+      class_weight: "balanced"
+
+# --- SLM ---
+slm:
+  candidates:                    # escolher 1 no início da Fase 2
+    - "Qwen/Qwen2.5-1.5B"
+    - "HuggingFaceTB/SmolLM2-1.7B"
+  active_model: "Qwen/Qwen2.5-1.5B"   # o que será usado
+  max_seq_len: 512
+  batch_size: 16
+  device: "cuda"
+  dtype: "float16"
+
+  # Embedding (método B)
+  embedding:
+    pooling: "mean_last_hidden"          # mean_last_hidden | cls_token
+    heads:
+      - "xgboost"
+      - "random_forest"
+      - "logistic_regression"
+    head_params:
+      xgboost:
+        n_estimators: 500
+        max_depth: 6
+        learning_rate: 0.1
+      random_forest:
+        n_estimators: 500
+      logistic_regression:
+        C: 1.0
+        max_iter: 1000
+
+  # Benign-only (método A)
+  benign_only:
+    training: "causal_lm"              # next-token prediction em textos benignos
+    lora:
+      enabled: true
+      rank: 16
+      alpha: 32
+      dropout: 0.05
+      target_modules: ["q_proj", "v_proj"]
+    learning_rate: 0.0002
+    epochs: 3
+    early_stopping:
+      patience: 2
+      monitor: "val_loss"
+    score: "mean_token_nll"            # mean_token_nll | perplexity
+    thresholds:
+      fpr_targets: [0.001, 0.01, 0.05]  # FPR 0.1%, 1%, 5%
+
+  # Quantização (4-bit)
+  quantization:
+    enabled: true
+    method: "bitsandbytes"
+    bits: 4
+    compute_dtype: "float16"
+
+# --- Métricas ---
+metrics:
+  classification:
+    - "pr_auc"
+    - "f1_macro"
+    - "f1_per_class"
+    - "precision"
+    - "recall"
+    - "fpr_at_tpr_95"
+    - "confusion_matrix"
+    - "roc_auc"
+  deployment:
+    - "latency_per_sample_ms"
+    - "throughput_samples_per_sec"
+    - "ram_mb"
+    - "vram_mb"
+  report:
+    format: "csv"               # csv | json
+    confidence: "mean_std"      # mean_std sobre as 5 seeds
+
+# --- Paths ---
+paths:
+  raw_data: "data/raw/"
+  processed_data: "data/processed/"
+  models: "outputs/models/"
+  results: "outputs/results/"
+  plots: "outputs/plots/"
+  logs: "outputs/logs/"
