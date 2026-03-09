@@ -86,7 +86,12 @@ def run_single_seed(cfg: dict, seed: int, logger):
     with torch.no_grad():
         X_t = torch.tensor(X_test, dtype=torch.float32).to(device)
         logits = mlp(X_t).cpu().numpy()
-    mlp_probs = np.exp(logits[:, 1]) / np.exp(logits).sum(axis=1)
+    
+    # Stable softmax to avoid overflow/NaN
+    logits_shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exps = np.exp(logits_shifted)
+    mlp_probs = exps[:, 1] / exps.sum(axis=1)
+    
     mlp_preds = logits.argmax(axis=1)
     all_results["mlp"] = compute_all_metrics(y_test, mlp_preds, mlp_probs)
     all_results["mlp"]["model"] = "MLP"
@@ -114,7 +119,7 @@ def run_single_seed(cfg: dict, seed: int, logger):
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 1: Baselines tabulares")
-    parser.add_argument("--config", default="configs/experiment.yaml")
+    parser.add_argument("--config", default="/home/tec/Projects/slm-spyware-detection/configs/experiment.yaml")
     args = parser.parse_args()
 
     cfg = load_config(args.config)

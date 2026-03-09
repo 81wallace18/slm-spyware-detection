@@ -83,7 +83,7 @@ def run_single_seed(cfg: dict, seed: int, model, tokenizer, logger, quantized: b
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 2: SLM embeddings + head")
-    parser.add_argument("--config", default="configs/experiment.yaml")
+    parser.add_argument("--config", default="/home/tec/Projects/slm-spyware-detection/configs/experiment.yaml")
     parser.add_argument("--quantize", action="store_true", help="Usar modelo 4-bit")
     args = parser.parse_args()
 
@@ -94,7 +94,8 @@ def main():
     # Carrega modelo uma vez
     logger.info(f"Loading SLM: {cfg['slm']['active_model']} "
                 f"(quantized={args.quantize})")
-    model, tokenizer = load_slm(cfg, quantize=args.quantize)
+    # Para extração de embeddings, não precisamos do CausalLM head (economiza ~1GB VRAM)
+    model, tokenizer = load_slm(cfg, quantize=args.quantize, causal_lm=False)
 
     seeds = cfg["seeds"]
     results_by_model = {}

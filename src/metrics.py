@@ -124,9 +124,12 @@ def measure_memory() -> Dict[str, float]:
 def aggregate_seeds(results_per_seed: list) -> pd.DataFrame:
     """Agrega resultados de múltiplas seeds em mean±std."""
     df = pd.DataFrame(results_per_seed)
+    # Seleciona apenas colunas numéricas para agregação
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    
     agg = pd.DataFrame({
-        "mean": df.mean(),
-        "std": df.std(),
+        "mean": df[numeric_cols].mean(),
+        "std": df[numeric_cols].std(),
     })
     agg["formatted"] = agg.apply(
         lambda r: f"{r['mean']:.4f}±{r['std']:.4f}", axis=1

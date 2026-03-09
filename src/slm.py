@@ -1,10 +1,14 @@
 """SLM: embeddings + head clássico (método B) e benign-only scoring (método A)."""
 
+import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 from typing import List, Tuple, Optional, Dict
 from pathlib import Path
+
+# Otimização de fragmentação de VRAM para GPUs pequenas
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 
 # ── Dataset de texto ─────────────────────────────────────────
@@ -36,16 +40,16 @@ class TextDataset(Dataset):
 
 # ── Carregar modelo SLM ─────────────────────────────────────
 
-def load_slm(cfg: dict, quantize: bool = False):
-    """Carrega modelo e tokenizer. Se quantize=True, carrega em 4-bit."""
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+def load_slm(cfg: dict, quantize: bool = False, causal_lm: bool = True):
+    """Carrega modelo e tokenizer. Se quantize=True, carrega em 4-bit.
+    causal_lm=False carrega apenas o modelo base (útil para embeddings)."""
+    from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
 
     model_name = cfg["slm"]["active_model"]
     kwargs = {"device_map": "auto", "torch_dtype": torch.float16}
 
     if quantize and cfg["slm"]["quantization"]["enabled"]:
         from transformers import BitsAndBytesConfig
-        qcfg = cfg["slm"]["quantization"]
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.float16,
@@ -55,7 +59,10 @@ def load_slm(cfg: dict, quantize: bool = False):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    # Se causal_lm=True, carrega com o head de linguagem (para Método A/Fine-tuning)
+    # Se causal_lm=False, carrega apenas o encoder base (para Método B/Embeddings)
+    loader = AutoModelForCausalLM if causal_lm else AutoModel
+    model = loader.from_pretrained(model_name, **kwargs)
     model.eval()
     return model, tokenizer
 
@@ -65,7 +72,7 @@ def load_slm(cfg: dict, quantize: bool = False):
 @torch.no_grad()
 def extract_embeddings(
     model, tokenizer, texts: List[str], cfg: dict,
-    batch_size: int = 16, device: str = "cuda"
+    batch_size: int = 8, device: str = "cuda"
 ) -> np.ndarray:
     """Extrai embeddings via mean pooling do last hidden state."""
     max_len = cfg["slm"]["max_seq_len"]
@@ -77,9 +84,18 @@ def extract_embeddings(
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
 
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask,
-                        output_hidden_states=True)
-        hidden = outputs.hidden_states[-1]  # (B, seq_len, hidden_dim)
+        # Usar o modelo diretamente (sem output_hidden_states para economizar VRAM)
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        
+        # Identifica onde está o last_hidden_state dependendo de como o modelo foi carregado
+        if hasattr(outputs, "last_hidden_state"):
+            hidden = outputs.last_hidden_state
+        elif hasattr(model, "model") and hasattr(model.model, "forward"):
+            # Se for CausalLM, acessamos o modelo base interno para pegar o hidden state
+            # sem precisar da camada de predição final (LM Head)
+            hidden = model.model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+        else:
+            raise ValueError("O modelo fornecido não permite extração direta de hidden states.")
 
         # Mean pooling com mask
         mask_expanded = attention_mask.unsqueeze(-1).float()
@@ -118,12 +134,16 @@ def finetune_benign_only(
     model, tokenizer, texts_benign: List[str], cfg: dict,
     texts_val: Optional[List[str]] = None,
 ):
-    """Fine-tune causal LM com LoRA nos textos benignos."""
-    from peft import LoraConfig, get_peft_model, TaskType
+    """Fine-tune causal LM com LoRA nos textos benignos (QLoRA)."""
+    from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
     from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling
 
     bo_cfg = cfg["slm"]["benign_only"]
     lora_cfg = bo_cfg["lora"]
+
+    # Preparação para treinamento quantizado (crucial para 4-bit)
+    if cfg["slm"]["quantization"]["enabled"]:
+        model = prepare_model_for_kbit_training(model)
 
     if lora_cfg["enabled"]:
         peft_config = LoraConfig(
@@ -136,23 +156,34 @@ def finetune_benign_only(
         model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
 
+    # Ativar checkpointing de gradientes para economizar VRAM (troca tempo por memória)
+    model.gradient_checkpointing_enable()
+
     max_len = cfg["slm"]["max_seq_len"]
     train_ds = TextDataset(texts_benign, tokenizer, max_len)
     val_ds = TextDataset(texts_val, tokenizer, max_len) if texts_val else None
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
+    # Configurações de treinamento otimizadas para Ultra-Low VRAM (6GB)
     training_args = TrainingArguments(
         output_dir="outputs/models/benign_only",
         num_train_epochs=bo_cfg["epochs"],
         per_device_train_batch_size=cfg["slm"]["batch_size"],
+        per_device_eval_batch_size=1,  # Avaliação mínima
+        gradient_accumulation_steps=16, 
+        eval_accumulation_steps=1,     # Limpa VRAM frequentemente na avaliação
+        prediction_loss_only=True,     # Não guarda logits (economiza MUITA VRAM)
+        optim="paged_adamw_8bit",
         learning_rate=bo_cfg["learning_rate"],
-        logging_steps=50,
+        logging_steps=10,
         eval_strategy="epoch" if val_ds else "no",
         save_strategy="epoch",
         load_best_model_at_end=bool(val_ds),
         report_to="none",
         fp16=True,
+        gradient_checkpointing=True,
+        max_grad_norm=0.3,
     )
 
     trainer = Trainer(
@@ -162,7 +193,15 @@ def finetune_benign_only(
         eval_dataset=val_ds,
         data_collator=collator,
     )
+    
+    # Desativa cache durante o treino (economiza VRAM e evita erros com checkpointing)
+    model.config.use_cache = False
+    
     trainer.train()
+    
+    # Reativa cache após o treino para inferência rápida
+    model.config.use_cache = True
+    
     return model
 
 

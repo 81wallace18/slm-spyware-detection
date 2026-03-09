@@ -68,9 +68,9 @@ def split_standard(
     train_idx, val_idx = next(sss2.split(df_trainval, df_trainval["label"]))
 
     return {
-        "train": df_trainval.iloc[train_idx].reset_index(drop=True),
-        "val": df_trainval.iloc[val_idx].reset_index(drop=True),
-        "test": df.iloc[test_idx].reset_index(drop=True),
+        "train": df_trainval.iloc[train_idx],
+        "val": df_trainval.iloc[val_idx],
+        "test": df.iloc[test_idx],
     }
 
 
@@ -122,20 +122,26 @@ def split_unseen_family(
 
         folds.append({
             "family": held_family,
-            "train": rest_trainval.iloc[train_idx].reset_index(drop=True),
-            "val": rest_trainval.iloc[val_idx].reset_index(drop=True),
-            "test": test.reset_index(drop=True),
+            "train": rest_trainval.iloc[train_idx],
+            "val": rest_trainval.iloc[val_idx],
+            "test": test,
         })
 
     return folds
 
 
 def check_leakage(splits: Dict[str, pd.DataFrame], feature_cols: List[str]):
-    """Verifica se há vazamento entre train e test."""
+    """Verifica se há vazamento entre train e test e reseta índices."""
     train_idx = set(splits["train"].index)
     test_idx = set(splits["test"].index)
     overlap = train_idx & test_idx
     if overlap:
         raise ValueError(f"Leakage detectado: {len(overlap)} amostras em train E test")
+    
+    # Reseta índices para compatibilidade com o resto do pipeline
+    splits["train"] = splits["train"].reset_index(drop=True)
+    splits["val"] = splits["val"].reset_index(drop=True)
+    splits["test"] = splits["test"].reset_index(drop=True)
+
     print(f"[OK] Sem leakage. Train={len(splits['train'])}, "
           f"Val={len(splits['val'])}, Test={len(splits['test'])}")

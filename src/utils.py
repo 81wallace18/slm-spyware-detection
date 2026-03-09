@@ -9,7 +9,7 @@ import yaml
 import numpy as np
 
 
-def load_config(path: str = "configs/experiment.yaml") -> dict:
+def load_config(path: str="/home/tec/Projects/slm-spyware-detection/configs/experiment.yaml") -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
 

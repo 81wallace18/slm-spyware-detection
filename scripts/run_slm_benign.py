@@ -128,10 +128,12 @@ def main():
     ensure_dirs(cfg)
     logger = get_logger("slm_benign")
 
-    logger.info(f"Loading SLM: {cfg['slm']['active_model']}")
-    model, tokenizer = load_slm(cfg, quantize=False)
+    logger.info(f"Loading SLM: {cfg['slm']['active_model']} (quantized for QLoRA)")
+    # Carregamos com quantize=True para permitir o treinamento em 4-bit (QLoRA)
+    model, tokenizer = load_slm(cfg, quantize=True, causal_lm=True)
 
     seeds = cfg["seeds"]
+
 
     if args.unseen_family:
         for seed in seeds:
