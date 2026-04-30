@@ -83,7 +83,7 @@ def run_single_seed(cfg: dict, seed: int, model, tokenizer, logger, quantized: b
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 2: SLM embeddings + head")
-    parser.add_argument("--config", default="/home/tec/Projects/slm-spyware-detection/configs/experiment.yaml")
+    parser.add_argument("--config", default="/home/jose/slm-spyware-detection/configs/experiment.yaml")
     parser.add_argument("--quantize", action="store_true", help="Usar modelo 4-bit")
     args = parser.parse_args()
 

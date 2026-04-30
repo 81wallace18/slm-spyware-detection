@@ -1,6 +1,8 @@
 outputs/
 data/raw/
 data/processed/
+data/*.csv
+venv/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/

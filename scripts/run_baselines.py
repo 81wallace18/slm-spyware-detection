@@ -119,7 +119,7 @@ def run_single_seed(cfg: dict, seed: int, logger):
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 1: Baselines tabulares")
-    parser.add_argument("--config", default="/home/tec/Projects/slm-spyware-detection/configs/experiment.yaml")
+    parser.add_argument("--config", default="/home/jose/slm-spyware-detection/configs/experiment.yaml")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
