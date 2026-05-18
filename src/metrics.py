@@ -66,12 +66,19 @@ def compute_anomaly_metrics(
     results = {}
     for fpr_target, threshold in thresholds.items():
         y_pred = (scores >= threshold).astype(int)
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        tn, fp, fn, tp = cm.ravel()
+        fpr_actual = fp / (fp + tn) if (fp + tn) else 0.0
         results[f"fpr_{fpr_target}"] = {
             "threshold": threshold,
             "tpr": float(recall_score(y_true, y_pred)),
-            "fpr_actual": float(1 - precision_score(y_true, y_pred, zero_division=0)),
+            "fpr_actual": float(fpr_actual),
             "f1": float(f1_score(y_true, y_pred)),
             "pr_auc": pr_auc(y_true, scores),
+            "tn": int(tn),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tp": int(tp),
         }
     return results
 

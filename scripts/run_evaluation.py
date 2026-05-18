@@ -7,10 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import json
-import numpy as np
 import pandas as pd
-from src.utils import load_config, ensure_dirs, get_logger
+from src.utils import DEFAULT_CONFIG, load_config, ensure_dirs, get_logger
 
 
 def load_all_results(results_dir: str) -> pd.DataFrame:
@@ -21,6 +19,9 @@ def load_all_results(results_dir: str) -> pd.DataFrame:
         df = pd.read_csv(f)
         dfs.append(df)
     for f in results_path.glob("slm_embed_*.csv"):
+        df = pd.read_csv(f)
+        dfs.append(df)
+    for f in results_path.glob("benign_only_*.csv"):
         df = pd.read_csv(f)
         dfs.append(df)
     if dfs:
@@ -34,7 +35,7 @@ def generate_comparison_table(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     metrics_cols = ["pr_auc", "roc_auc", "f1_macro", "precision", "recall",
-                     "fpr_at_tpr_95"]
+                     "fpr_at_tpr_95", "f1", "tpr", "fpr_actual"]
     available = [c for c in metrics_cols if c in df.columns]
 
     grouped = df.groupby("model")[available].agg(["mean", "std"])
@@ -46,7 +47,12 @@ def generate_comparison_table(df: pd.DataFrame) -> pd.DataFrame:
         for metric in available:
             m = grouped.loc[model, (metric, "mean")]
             s = grouped.loc[model, (metric, "std")]
-            row[metric] = f"{m:.4f}±{s:.4f}"
+            if pd.isna(m):
+                row[metric] = ""
+            elif pd.isna(s):
+                row[metric] = f"{m:.4f}"
+            else:
+                row[metric] = f"{m:.4f}±{s:.4f}"
         rows.append(row)
 
     return pd.DataFrame(rows)
@@ -64,6 +70,8 @@ def generate_delta_table(comparison: pd.DataFrame, baseline_model: str = "MLP→
     for _, row in comparison.iterrows():
         delta_row = {"model": row["model"]}
         for metric in metrics_cols:
+            if not baseline_row[metric] or not row[metric]:
+                continue
             base_val = float(baseline_row[metric].split("±")[0])
             curr_val = float(row[metric].split("±")[0])
             if base_val > 0:
@@ -76,7 +84,7 @@ def generate_delta_table(comparison: pd.DataFrame, baseline_model: str = "MLP→
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 4: Avaliação final")
-    parser.add_argument("--config", default="configs/experiment.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args()
 
     cfg = load_config(args.config)

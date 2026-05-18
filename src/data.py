@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from sklearn.model_selection import StratifiedShuffleSplit, GroupShuffleSplit
 from typing import Tuple, Dict, List, Optional
 
@@ -9,7 +10,17 @@ from typing import Tuple, Dict, List, Optional
 def load_dataset(cfg: dict) -> pd.DataFrame:
     """Carrega CSV e faz limpeza básica."""
     ds_cfg = cfg["dataset"]
-    df = pd.read_csv(ds_cfg["path"])
+    dataset_path = Path(ds_cfg["path"])
+    if not dataset_path.exists():
+        raise FileNotFoundError(
+            f"Dataset não encontrado em '{dataset_path}'. "
+            "Execute dataset.py ou ajuste dataset.path no config."
+        )
+
+    df = pd.read_csv(dataset_path)
+    target = ds_cfg["target_column"]
+    if target not in df.columns:
+        raise ValueError(f"Coluna target '{target}' não encontrada no dataset")
 
     # Remove duplicatas
     if cfg["preprocessing"].get("remove_duplicates", False):

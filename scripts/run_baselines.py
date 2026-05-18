@@ -9,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
-from src.utils import load_config, set_seed, ensure_dirs, get_logger, save_results
+from src.utils import (
+    DEFAULT_CONFIG, load_config, set_seed, ensure_dirs, get_logger, save_results
+)
 from src.data import (
     load_dataset, binarize_target, get_feature_columns,
     split_standard, check_leakage,
@@ -19,9 +21,9 @@ from src.baselines import train_rf, train_xgboost, train_mlp, train_mlp_rf, pred
 from src.metrics import compute_all_metrics, measure_latency, measure_memory, aggregate_seeds
 
 
-def save_history(history: list, model_name: str, seed: int):
+def save_history(history: list, model_name: str, seed: int, results_dir: str):
     """Salva curvas de treino (loss, accuracy por epoch) em CSV."""
-    path = Path(f"outputs/results/history_{model_name}_seed{seed}.csv")
+    path = Path(results_dir) / f"history_{model_name}_seed{seed}.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(history).to_csv(path, index=False)
 
@@ -78,7 +80,7 @@ def run_single_seed(cfg: dict, seed: int, logger):
     mlp, mlp_history = train_mlp(
         X_train, y_train, X_val, y_val, cfg["baselines"]["mlp"], device
     )
-    save_history(mlp_history, "mlp", seed)
+    save_history(mlp_history, "mlp", seed, cfg["paths"]["results"])
     logger.info(f"MLP: {len(mlp_history)} epochs, "
                 f"best val_acc={max(h['val_accuracy'] for h in mlp_history):.4f}")
 
@@ -103,7 +105,7 @@ def run_single_seed(cfg: dict, seed: int, logger):
     mlp_rf_model, rf_head, mlp_rf_history = train_mlp_rf(
         X_train, y_train, X_val, y_val, cfg["baselines"]["mlp_rf"], device
     )
-    save_history(mlp_rf_history, "mlp_rf", seed)
+    save_history(mlp_rf_history, "mlp_rf", seed, cfg["paths"]["results"])
     logger.info(f"MLP→RF: {len(mlp_rf_history)} epochs, "
                 f"best val_acc={max(h['val_accuracy'] for h in mlp_rf_history):.4f}")
 
@@ -119,7 +121,7 @@ def run_single_seed(cfg: dict, seed: int, logger):
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 1: Baselines tabulares")
-    parser.add_argument("--config", default="/home/jose/slm-spyware-detection/configs/experiment.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -139,7 +141,7 @@ def main():
     for model_key, results_list in results_by_model.items():
         agg = aggregate_seeds(results_list)
         logger.info(f"\n{model_key}:\n{agg['formatted'].to_string()}")
-        save_results(results_list, f"outputs/results/baselines_{model_key}.csv")
+        save_results(results_list, f"{cfg['paths']['results']}/baselines_{model_key}.csv")
 
     logger.info("Fase 1 completa.")
 
