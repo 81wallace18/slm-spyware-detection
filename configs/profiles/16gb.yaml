@@ -1,0 +1,22 @@
+# Profile conservador para GPUs com 16GB de VRAM.
+# Prioriza não estourar memória; execução fica mais lenta.
+
+slm:
+  max_seq_len: 512
+  batch_size: 1
+
+  benign_only:
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 16
+    eval_strategy: "no"
+    save_strategy: "no"
+    load_best_model_at_end: false
+
+  quantization:
+    enabled: true
+    method: "bitsandbytes"
+    bits: 4
+    compute_dtype: "float16"
+    quant_type: "nf4"
+    use_double_quant: true

@@ -8,13 +8,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from src.utils import load_config, set_seed, ensure_dirs, get_logger, save_results
+from src.utils import (
+    DEFAULT_CONFIG, load_config, set_seed, ensure_dirs, get_logger,
+    resolve_device, save_results,
+)
 from src.data import (
     load_dataset, binarize_target, get_feature_columns,
     split_standard, check_leakage,
 )
 from src.features import serialize_dataframe, check_token_lengths
-from src.slm import load_slm, extract_embeddings, train_embedding_head
+from src.slm import (
+    cleanup_cuda, load_slm, extract_embeddings, peak_vram_mb, train_embedding_head,
+)
 from src.metrics import (
     compute_all_metrics, measure_latency, measure_memory, aggregate_seeds,
 )
@@ -34,7 +39,6 @@ def run_single_seed(cfg: dict, seed: int, model, tokenizer, logger, quantized: b
 
     # Serialização
     texts_train = serialize_dataframe(splits["train"], feature_cols, cfg)
-    texts_val = serialize_dataframe(splits["val"], feature_cols, cfg)
     texts_test = serialize_dataframe(splits["test"], feature_cols, cfg)
 
     # Checa tokens (só na primeira seed)
@@ -46,12 +50,12 @@ def run_single_seed(cfg: dict, seed: int, model, tokenizer, logger, quantized: b
     # Embeddings
     logger.info("Extracting embeddings...")
     batch_size = cfg["slm"]["batch_size"]
-    device = cfg["slm"]["device"]
+    device = resolve_device(cfg["slm"].get("device", "cuda"))
 
     emb_train = extract_embeddings(model, tokenizer, texts_train, cfg, batch_size, device)
-    emb_val = extract_embeddings(model, tokenizer, texts_val, cfg, batch_size, device)
     emb_test = extract_embeddings(model, tokenizer, texts_test, cfg, batch_size, device)
     logger.info(f"Embedding dim: {emb_train.shape[1]}")
+    logger.info(f"Peak VRAM embeddings: {peak_vram_mb():.0f}MB")
 
     y_train = splits["train"]["label"].values
     y_test = splits["test"]["label"].values
@@ -77,32 +81,36 @@ def run_single_seed(cfg: dict, seed: int, model, tokenizer, logger, quantized: b
     # Memory
     mem = measure_memory()
     logger.info(f"Memory: RAM={mem['ram_mb']:.0f}MB, VRAM={mem['vram_mb']:.0f}MB")
+    cleanup_cuda()
 
     return all_results
 
 
 def main():
     parser = argparse.ArgumentParser(description="Fase 2: SLM embeddings + head")
-    parser.add_argument("--config", default="/home/jose/slm-spyware-detection/configs/experiment.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument("--profile", choices=["16gb"], help="Aplicar profile de VRAM")
     parser.add_argument("--quantize", action="store_true", help="Usar modelo 4-bit")
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, profile=args.profile)
     ensure_dirs(cfg)
     logger = get_logger("slm_embed")
 
+    quantize = args.quantize or bool(args.profile)
+
     # Carrega modelo uma vez
     logger.info(f"Loading SLM: {cfg['slm']['active_model']} "
-                f"(quantized={args.quantize})")
+                f"(quantized={quantize}, profile={args.profile})")
     # Para extração de embeddings, não precisamos do CausalLM head (economiza ~1GB VRAM)
-    model, tokenizer = load_slm(cfg, quantize=args.quantize, causal_lm=False)
+    model, tokenizer = load_slm(cfg, quantize=quantize, causal_lm=False)
 
     seeds = cfg["seeds"]
     results_by_model = {}
 
     for seed in seeds:
         seed_results = run_single_seed(cfg, seed, model, tokenizer, logger,
-                                        quantized=args.quantize)
+                                        quantized=quantize)
         for model_key, metrics in seed_results.items():
             results_by_model.setdefault(model_key, []).append(metrics)
 
@@ -111,7 +119,7 @@ def main():
     for model_key, results_list in results_by_model.items():
         agg = aggregate_seeds(results_list)
         logger.info(f"\n{model_key}:\n{agg['formatted'].to_string()}")
-        save_results(results_list, f"outputs/results/{model_key}.csv")
+        save_results(results_list, f"{cfg['paths']['results']}/{model_key}.csv")
 
     logger.info("Fase 2 completa.")
 
