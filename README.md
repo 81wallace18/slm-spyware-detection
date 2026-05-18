@@ -56,6 +56,8 @@ pyyaml
 
 Coloque o CSV do CIC-MalMem-2022 no path definido em `configs/experiment.yaml` e execute as fases em ordem:
 
+Guia rápido com modo 16GB: [`docs/RUNNING.md`](docs/RUNNING.md).
+
 ```bash
 # Fase 1 — Baselines tabulares
 python scripts/run_baselines.py
